@@ -14,13 +14,15 @@ RUN apt-get update && \
     python3-pip \
     python3-venv \
     python3-dev \
+    python3-magic \
+    python3-py7zr \
     build-essential \
     nginx \
     python3-pygments \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip
-RUN pip3 install --upgrade pip --break-system-packages
+RUN pip3 install --upgrade --user pip --break-system-packages
 
 # Copy the requirements file and install Python dependencies
 COPY requirements.txt /app/

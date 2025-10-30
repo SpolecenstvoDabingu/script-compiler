@@ -102,13 +102,13 @@ def is_archive_file(file_path: Path) -> bool:
     return False
 
 def compile_latex(tex_path: Path, output_path: Path, work_dir: Path) -> bool:
-    """Compile LaTeX document to PDF."""
+    """Compile LaTeX document to PDF with proper PythonTeX support."""
     main_tex_name = tex_path.name
     logger.info(f"Starting LaTeX compilation for {main_tex_name}")
 
     try:
-        # First pass with latexmk
-        logger.debug("Running first latexmk pass")
+        # First pass with latexmk - use -f flag to force processing even with missing files
+        logger.debug("Running first latexmk pass (with -f for pythontex compatibility)")
         result = subprocess.run(
             [
                 "latexmk",
@@ -116,6 +116,7 @@ def compile_latex(tex_path: Path, output_path: Path, work_dir: Path) -> bool:
                 "-interaction=nonstopmode",
                 "-file-line-error",
                 "-pdf",
+                "-f",  # Force processing even if there are errors
                 "-outdir=" + str(work_dir),
                 "--shell-escape",
                 str(tex_path),
@@ -126,13 +127,30 @@ def compile_latex(tex_path: Path, output_path: Path, work_dir: Path) -> bool:
             timeout=300  # 5 minute timeout
         )
         
-        if result.returncode != 0:
-            logger.error(f"First latexmk pass failed: {result.stderr}")
-            return False
+        # With -f flag, we check if pythontex files were generated rather than checking return code
+        logger.debug(f"First latexmk pass completed with return code: {result.returncode}")
 
-        # Run pythontex if needed
+        # Check if pythontex is needed by looking for \usepackage{pythontex} or generated files
+        needs_pythontex = False
+        
+        # Check for pythontex code files
         pythontex_files = list(work_dir.glob("*.pytxcode"))
         if pythontex_files:
+            needs_pythontex = True
+            logger.debug(f"Found {len(pythontex_files)} pythontex code files")
+        
+        # Also check the .tex file content
+        try:
+            with open(tex_path, 'r', encoding='utf-8', errors='ignore') as f:
+                tex_content = f.read()
+                if '\\usepackage{pythontex}' in tex_content or '\\usepackage[' in tex_content and 'pythontex' in tex_content:
+                    needs_pythontex = True
+                    logger.debug("Detected pythontex package in .tex file")
+        except Exception as e:
+            logger.warning(f"Could not read .tex file to check for pythontex: {e}")
+
+        # Run pythontex if needed
+        if needs_pythontex:
             logger.debug("Running pythontex")
             result = subprocess.run(
                 [
@@ -149,6 +167,7 @@ def compile_latex(tex_path: Path, output_path: Path, work_dir: Path) -> bool:
             
             if result.returncode != 0:
                 logger.warning(f"pythontex failed: {result.stderr}")
+                # Continue anyway - the final pass might still work
 
             # Final pass with latexmk after pythontex
             logger.debug("Running final latexmk pass")
@@ -168,6 +187,17 @@ def compile_latex(tex_path: Path, output_path: Path, work_dir: Path) -> bool:
                 text=True,
                 timeout=300
             )
+            
+            if result.returncode != 0:
+                logger.error(f"Final latexmk pass failed: {result.stderr}")
+                # Check if PDF was generated anyway
+                if not output_path.exists():
+                    return False
+        else:
+            # No pythontex needed, check if first pass failed
+            if result.returncode != 0 and not output_path.exists():
+                logger.error(f"Latexmk compilation failed: {result.stderr}")
+                return False
 
         logger.info(f"LaTeX compilation completed. PDF exists: {output_path.exists()}")
         return output_path.exists()
